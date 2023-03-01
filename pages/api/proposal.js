@@ -1,6 +1,6 @@
 // Next.js API route support: https://nextjs.org/docs/api-routes/introduction
 import axios from "axios";
-
+const web3 = require('web3')
 // Inputs optional for req.query
 // platforms (required), can be passed as array or single value
 // blockNumber (default is currentBlock), must be int
@@ -47,10 +47,11 @@ export default async function handler(req, res) {
         var proposalMethods = new Map();
 
         // List of platforms & corresponding methods to query proposals for a platform
+        proposalMethods.set('euler', getEulerProposals);
         proposalMethods.set('aave', getAaveProposals);
         proposalMethods.set('compound', getCompoundProposals);
         proposalMethods.set('uniswap', getUniswapProposals);
-        proposalMethods.set('maker', getMakerProposals);
+        //proposalMethods.set('maker', getMakerProposals);
 
         let allProposals = []
         for (const [platform, getPlatformProposals] of proposalMethods.entries()) {
@@ -76,6 +77,13 @@ async function getBlockNumber() {
     const response = await axios.get('https://api.blockcypher.com/v1/eth/main');
     const blockNumber = parseInt(response.data.height);
     return blockNumber;
+}
+
+async function blockNumbertoDeltaSeconds(block) {
+    var currentBlock = await getBlockNumber();
+    var days = (block - currentBlock)/7109;
+    var seconds = days * 86400;
+    return seconds;
 }
 
 // Query all Aave proposals, and return JSON objects for each proposal
@@ -121,14 +129,15 @@ async function getAaveProposals(blockNumber) {
         if (state in stateDefinition) {
             state = stateDefinition[state];
         }
-        var link = "https://app.aave.com/#/governance/" + id + "-" + ipfsHash;
+        var link = "https://app.aave.com/governance/proposal/" + id;
+        var remainingTime = await blockNumbertoDeltaSeconds(endBlock);
         var proposalJSON = {
             title: title,
             id: id,
             platform: platform,
             state: state.toLowerCase(),
             link: link,
-            endBlock: endBlock
+            remainingTime: remainingTime
         }
         aaveProposals.push(proposalJSON);
     }
@@ -165,6 +174,13 @@ async function getUniswapProposals(blockNumber) {
     });
     var titleLinkInfo = response2.data.proposals;
 
+    var response3 = await axios.get("https://api.boardroom.info/v1/protocols/uniswap/proposals", {
+        params: {
+            key:"2adcb901aab2b418a4bcc086f0833f55"
+        }
+    });
+    var enrichmentData = response2.data.data;
+
     var uniswapProposals = [];
     for (var i in response.data.data.proposals) {
         var proposal = allProposals[i];
@@ -179,6 +195,7 @@ async function getUniswapProposals(blockNumber) {
         var state = proposal.status;
 
         var titleLinkProposal = titleLinkInfo[i];
+        var remainingTime = await blockNumbertoDeltaSeconds(endBlock);
         var title = titleLinkProposal.title;
         var link = titleLinkProposal.uniswap_url;
         var proposalJSON = {
@@ -187,7 +204,7 @@ async function getUniswapProposals(blockNumber) {
             platform: platform,
             state: state.toLowerCase(),
             link: link,
-            endBlock: endBlock
+            remainingTime: remainingTime
         }
         uniswapProposals.push(proposalJSON);
     }
@@ -249,17 +266,67 @@ async function getCompoundProposals(blockNumber) {
             platform: platform,
             state: state.toLowerCase(),
             link: link,
-            // TODO: Compound API does not have endBlock, add endBlock back into response
-            endBlock: null
+            remainingTime: endTime - Date.now()/1000
         }
         compoundProposals.push(proposalJSON);
     }
     return compoundProposals;
 }
 
+async function getEulerProposals(blockNumber) {
+    var query = `{
+        proposals (
+          skip: 0,
+          where: {
+            space_in: ["eulerdao.eth"],
+            state: "active"
+          },
+          orderBy: "created",
+          orderDirection: desc
+        ) {
+          id
+          title
+          start
+          end
+          state
+        }
+      }`;
+
+    var endpoint = "https://hub.snapshot.org/graphql";
+    const response = await axios.post(endpoint, {
+        query: query 
+    },
+    {
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    });
+    var props = response.data.data.proposals;
+    var eulerProposals = [];
+    for(var i = 0; i < props.length; i++) {
+        var proposal = props[i];
+        var id = proposal.id;
+        var platform = "Euler";
+        var state = proposal.state;
+        var title = proposal.title;
+        var link = "https://snapshot.org/#/eulerdao.eth/proposal/" + id;
+        var proposalJSON = {
+            title: title,
+            id: id,
+            platform: platform,
+            state: state.toLowerCase(),
+            link: link,
+            remainingTime: (proposal.end - Date.now()/1000)
+        }
+        eulerProposals.push(proposalJSON);
+    }
+    return eulerProposals;
+}
+
 // Query all MakerDAO proposals, and return JSON objects for each proposal
 // Query executive and polls separately 
 // API documentation at: https://vote.makerdao.com/api-docs
+/*
 async function getMakerProposals(blockNumber) {
     var makerProposals = [];
     // executive proposals 
@@ -360,3 +427,4 @@ async function getMakerProposals(blockNumber) {
     }
     return makerProposals;
 }
+*/
